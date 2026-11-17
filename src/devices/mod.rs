@@ -1,9 +1,11 @@
 //! Battery readers. Each `Provider` covers one protocol and returns every device it can currently see.
 
+pub mod blackshark;
 pub mod bluetooth;
 pub mod dualsense;
 pub mod headsets;
 pub mod logitech;
+pub mod maxxter;
 pub mod razer;
 pub mod xinput;
 
@@ -39,6 +41,8 @@ pub fn all() -> Vec<Box<dyn Provider>> {
         Box::new(xinput::XInput),
         Box::new(dualsense::DualSense),
         Box::new(razer::Razer::default()),
+        Box::new(maxxter::Maxxter::default()),
+        Box::new(blackshark::BlackShark::default()),
         Box::new(logitech::Logitech::default()),
         Box::new(headsets::HeadsetProvider::new("Logitech LIGHTSPEED headsets", headsets::centurion::specs())),
         Box::new(headsets::HeadsetProvider::new("SteelSeries", headsets::steelseries::specs())),

@@ -1,27 +1,38 @@
 # Battery Monitor
 
-A tiny Windows tray app that shows the battery level of your wireless mice, keyboards, controllers and headsets right
+A tiny Windows app that shows the battery level of your wireless mice, keyboards, controllers and headsets right
 on the taskbar. No vendor software needed.
 
-![The tray icon in each of its four styles, for several devices and battery levels](assets/icon-styles.png)
+**Two ways to show it** (switch with *Show on the taskbar* in the menu):
 
-The level bar is **green** from 50%, **amber** from 20%, **red** below 20%, and **blue** while charging. A faded icon
-means the device is asleep (e.g. an idle mouse) and shows its last known level.
+- **Tray icon** (default): a battery icon in the notification area.
+- **Taskbar widget**: the devices and their percentages drawn on the taskbar itself, next to the clock area:
+
+  ![The taskbar widget in each icon style](assets/widget.png)
+
+**Five icon styles**, for both:
+
+![The icon in each of its five styles, for several devices and battery levels](assets/icon-styles.png)
+
+The level bar (or ring) is **green** from 50%, **amber** from 20%, **red** below 20%, and **blue** while charging. A
+faded icon means the device is asleep (e.g. an idle mouse) and shows its last known level.
 
 - **The icon shows the lowest battery** among your devices (the one that needs attention), so one glance is enough.
   Prefer a specific device? Click the icon → **Icon shows** → pick it.
 - **Hover** the icon: every device with its exact percentage and charging state.
-- **Click** (left or right): all devices, *Icon shows*, *Icon style*, *One icon per device*, *Refresh now*,
-  *Start with Windows*, *Exit*.
+- **Click** (left or right): all devices, *Icon shows*, *Icon style*, *Show on the taskbar*, *One icon per device*,
+  *Refresh now*, *Start with Windows*, *Exit*.
 - **Icon style** (in the menu):
   - *Device + level bar* (default): big device symbol, level shown by the coloured bar.
+  - *Device in a level ring*: a line-art device icon inside a ring that fills up with the battery level.
   - *Device, filled by level*: the symbol itself is coloured from the bottom up to the battery level.
   - *Device + percentage*: small symbol next to the number.
   - *Percentage*: just the number, as large as possible.
 
   At 100% display scaling a tray icon is only 16 px, so the symbol and the number can't both be big; pick what you
-  prefer. The exact percentage is always in the tooltip.
-- **One icon per device** (in the menu) switches to a separate icon for each device instead.
+  prefer. The taskbar widget always adds the percentage next to the icon, and it's always in the tooltip.
+- **One icon per device** (in the menu) shows every device instead of one: a separate tray icon each, or all of
+  them side by side in the widget.
 - A notification appears when any device drops to 15% (once, re-armed after charging).
 - Values refresh every 60 s and right after a device connects or disconnects.
 - Adapts to light/dark taskbars and any display scaling.
@@ -31,13 +42,14 @@ means the device is asleep (e.g. an idle mouse) and shows its last known level.
 ## Download & install
 
 1. Go to **[Releases](../../releases/latest)** and download `BatteryMonitor-<version>-x64.exe`
-   (or `-arm64.exe` for ARM laptops such as Snapdragon / Surface Pro X). It's a single ~0.6 MB file. There's no
+   (or `-arm64.exe` for ARM laptops such as Snapdragon / Surface Pro X). It's a single ~0.7 MB file. There's no
    installer and nothing else to install.
 2. Put it somewhere permanent (e.g. `Documents\BatteryMonitor\`) and run it.
 3. **Windows SmartScreen will say "Windows protected your PC"** because the app isn't code-signed. Click
    **More info → Run anyway**. You only need to do this once.
 4. **Windows 11 hides new tray icons** in the overflow menu (the **^** next to the clock). Drag the battery icon from
    there onto the taskbar, or turn it on under *Settings › Personalization › Taskbar › Other system tray icons*.
+   Or click it → **Show on the taskbar** to use the taskbar widget instead, which is always visible.
 5. Click the battery icon → **Start with Windows** to have it start automatically.
 
 To update, exit the app (click the icon → *Exit*), replace the exe with the new one, and run it again.
@@ -54,6 +66,10 @@ log: that's what's needed to fix it.
 
 **Razer**: wireless mice and keyboards, on the HyperSpeed dongle or the cable
 - Any model that uses Razer's standard control protocol, which covers most recent ones. ✅ Viper V3 Pro
+
+**Razer BlackShark headsets**: on their 2.4 GHz HyperSpeed dongle
+- BlackShark V2 Pro (2023), V2 HyperSpeed, V3, V3 Pro, V3 X. ✅ V2 Pro (2023)
+- The V3 generation drops its wireless link if asked too often, so it's checked every 5 minutes.
 
 **Xbox and other XInput controllers**: over Bluetooth or the Xbox Wireless Adapter
 - Xbox One and Xbox Series controllers. ✅ Xbox One S controller (Bluetooth)
@@ -83,7 +99,8 @@ log: that's what's needed to fix it.
 - Cloud II Wireless (HP-era models), Cloud Alpha Wireless, Cloud Alpha 2 Wireless, Cloud Flight
 
 **Corsair**
-- VOID-family wireless headsets (VOID / VOID PRO / VOID ELITE Wireless, HS70 Wireless)
+- VOID-family wireless headsets (VOID / VOID PRO / VOID ELITE Wireless, HS70 / HS70 PRO Wireless).
+  ✅ VOID ELITE Wireless
 - Virtuoso RGB Wireless XT / SE, VOID Wireless V2, Virtuoso MAX Wireless, HS80 MAX Wireless
 - Experimental: other recent Corsair wireless devices, such as Slipstream mice and keyboards
 
@@ -92,6 +109,9 @@ log: that's what's needed to fix it.
 - AJ159P, PAW3950 version ("AJ159P-3950")
 - Tip: these are the Ajazz mice whose official web configurator is *ajazz.xcgaming.net*. Other Ajazz models use
   different protocols, see *Not supported*.
+
+**Mice on the `248A:5B2F` 2.4 GHz receiver**: Delux M800 Pro, and other mice that came with this receiver (e.g. some
+Ajazz AJ159P versions). The app names the mouse by the model code it reports.
 
 **Bluetooth devices of any brand**
 - Anything whose battery level Windows already shows in *Settings › Bluetooth & devices*: many earbuds and
@@ -102,13 +122,13 @@ log: that's what's needed to fix it.
 - **NuPhy keyboards** over USB or the 2.4 GHz dongle: the firmware tracks the battery but never sends it to the PC
   (checked against the community QMK firmware). In **Bluetooth mode** a NuPhy keyboard can work through the Bluetooth
   support above, if Windows shows its battery in Settings.
-- **Razer BlackShark V2 Pro (2023)** on its 2.4 GHz dongle: the dongle rejects the commands that work for the
-  PlayStation edition (tested). Paired over **Bluetooth** it can work through the Bluetooth support above.
-  Other Razer headsets that don't use Razer's standard control protocol aren't supported either.
+- **Other Razer headsets** (e.g. Kraken, Barracuda) that use neither Razer's standard control protocol nor a
+  BlackShark protocol.
 - **Logitech ASTRO A50** (uses its own protocol). G PRO X 2 LIGHTSPEED units on very old firmware: update the headset
   in G HUB first.
 - **HyperX Cloud II Wireless** (Kingston-branded, `0951:1718`), **HyperX Cloud III**.
-- **Other Ajazz mice** (e.g. AJ159 PRO / APEX, AJ159P MC PRO, AJ159 V2, AJ199): they use other chips and protocols.
+- **Other Ajazz mice** (e.g. AJ159 PRO / APEX, AJ159P MC PRO, AJ159 V2, AJ199), unless they use one of the receivers
+  above: they use other chips and protocols.
   Over **Bluetooth** they can work through the Bluetooth support above, if Windows shows their battery in Settings.
 - Wired headsets: they have no battery.
 
@@ -127,6 +147,11 @@ log: that's what's needed to fix it.
 | Corsair VOID family | `0xC9 0x64` request, status input report `0x64` |
 | Corsair Bragi | Property `0x0F` (level, tenths of a percent) and `0x10` (charge state) |
 | Ajazz AJ179, AJ159P-3950 | Command `0x10` (device info) on interface 2: model ID bytes 4–7, charging byte 12, battery byte 13, connected byte 14 |
+| `248A:5B2F` receiver (Delux M800 Pro, …) | Feature report `0x0C` status query `0C 01 20 00 <seq>`: model code bytes 8–11, battery byte 18, state byte 19 |
+| BlackShark V2 Pro (2023) | "PA" frames in output report `0x02`; remote mode on, customer GET `0x21` (level) / `0x2A` (charging), remote mode off |
+| BlackShark V2 HyperSpeed | Sequenced, XOR-checked frames in output report `0x02` (GET `0x21` / `0x2A`) |
+| BlackShark V3 / V3 Pro | XOR-checked frames in output report `0x02` on interface 5, class `0x21` |
+| BlackShark V3 X | Razer-style 64-byte feature report `0x07`, command `0x80` / `0x84` |
 | Bluetooth | Windows' `DEVPKEY_Bluetooth_Battery` device property |
 
 </details>
@@ -218,6 +243,19 @@ reverse-engineering work:
 - [ckb-next](https://github.com/ckb-next/ckb-next): Corsair Bragi
 - [aj179-linux](https://github.com/Rockeyxx/aj179-linux): Ajazz AJ179 (and with it the AJ159P-3950, which shares its
   protocol per Ajazz's own web configurator)
+- [Wireless-Device-Battery-Monitor](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor) (GPL-3.0): the
+  `248A:5B2F` receiver protocol (confirmed there on a Delux M800 Pro), the BlackShark protocols' documentation, and the
+  taskbar-widget technique
+- [HaloBattery](https://github.com/HeyOkay/HaloBattery) (MIT): BlackShark V2 Pro (2023) protocol cross-check, and the
+  inspiration for the ring icon style
+- OpenRazer pull requests [#2862](https://github.com/openrazer/openrazer/pull/2862) (BlackShark V2 Pro 2023),
+  [#2794](https://github.com/openrazer/openrazer/pull/2794) (V3 / V3 Pro), [#2899](https://github.com/openrazer/openrazer/pull/2899) (V3 X)
+  and [justik13/razer-blackshark-v2-hyperspeed-webhid](https://github.com/justik13/razer-blackshark-v2-hyperspeed-webhid) (MIT, V2 HyperSpeed)
+- Linux `hid-corsair-void` driver: Corsair VOID model IDs and status codes
+
+The ring style's device icons are from [Lucide](https://lucide.dev) (ISC license, Copyright (c) Lucide Icons and
+Contributors; see [assets/licenses/lucide-LICENSE.txt](assets/licenses/lucide-LICENSE.txt)), converted for the app by
+`tools/make_glyphs.py`.
 - Linux `hid-playstation` driver: DualSense report layout
 
 ## License

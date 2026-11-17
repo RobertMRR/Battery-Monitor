@@ -189,7 +189,7 @@ impl Provider for HeadsetProvider {
                 .model
                 .or(spec.name)
                 .map(str::to_string)
-                .or_else(|| list.iter().find_map(|c| c.product.clone()))
+                .or_else(|| list.iter().filter_map(|c| c.product.clone()).find(|p| !is_generic_name(p)))
                 .unwrap_or_else(|| spec.brand.to_string());
             let kind = if spec.name.is_none() { guess_kind(&name, spec.kind) } else { spec.kind };
             out.push(Battery { id, name, kind, percent, charging: r.charging, stale: r.asleep });
@@ -220,6 +220,13 @@ pub fn ask(ch: &mut Channel, request: &[u8], expected: impl Fn(&[u8]) -> bool, t
         }
         first_seen.get_or_insert(r);
     }
+}
+
+/// USB product strings that say nothing about the device (some dongles report these instead of a model name).
+fn is_generic_name(name: &str) -> bool {
+    let n = name.trim().to_ascii_lowercase();
+    ["hid interface", "usb input device", "hid device", "usb receiver", "wireless receiver", "usb device"]
+        .contains(&n.as_str())
 }
 
 /// Linear map of a raw device value onto 0..100, clamped.

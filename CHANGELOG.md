@@ -5,6 +5,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-17
+
+### Added
+- **Taskbar widget**: *Show on the taskbar* draws the devices and their percentages on the taskbar itself, next to
+  the clock area, instead of a tray icon. It follows the other menu choices (which device, one or all devices, icon
+  style) and falls back to the tray icon on a vertical taskbar.
+- **Ring icon style** (*Device in a level ring*): a line-art device icon (from Lucide) inside a ring that fills up
+  with the battery level.
+- **Razer BlackShark headsets**: V2 Pro (2023), V2 HyperSpeed, V3, V3 Pro, V3 X. V2 Pro (2023) confirmed on hardware.
+- **Mice on the `248A:5B2F` receiver**: Delux M800 Pro and others that came with it (e.g. some Ajazz AJ159P versions).
+
+### Fixed
+- Corsair VOID-family headsets: show the model name (e.g. "Corsair VOID ELITE Wireless") instead of the dongle's
+  generic "HID Interface"; keep showing the headset when its battery is critically low (status 3 was rejected); hide
+  it when the headset is switched off instead of showing a stale level. VOID ELITE Wireless confirmed on hardware.
+- Devices whose USB name is generic ("HID Interface", "USB Receiver", …) show their brand instead.
+
 ## [0.2.0] - 2026-11-17
 
 ### Added
@@ -33,6 +50,7 @@ First public release.
   - Any Bluetooth device whose battery Windows shows in Settings
 - Diagnostics for bug reports: `--probe --verbose`, `--list-hid`.
 
-[Unreleased]: https://github.com/RobertMRR/Battery-Monitor/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/RobertMRR/Battery-Monitor/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/RobertMRR/Battery-Monitor/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/RobertMRR/Battery-Monitor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/RobertMRR/Battery-Monitor/releases/tag/v0.1.0

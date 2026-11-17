@@ -11,6 +11,7 @@ const KEY: &str = r"Software\BatteryMonitor";
 const SEPARATE: &str = "OneIconPerDevice";
 const ICON_DEVICE: &str = "IconDevice";
 const ICON_STYLE: &str = "IconStyle";
+const TASKBAR_WIDGET: &str = "TaskbarWidget";
 
 /// One tray icon per device instead of a single icon (default: single).
 pub fn separate_icons() -> bool {
@@ -21,12 +22,22 @@ pub fn set_separate_icons(on: bool) {
     write(SEPARATE, REG_DWORD, &(on as u32).to_le_bytes());
 }
 
+/// Show on the taskbar itself (widget) instead of in the notification area (default: notification area).
+pub fn taskbar_widget() -> bool {
+    read_flag(TASKBAR_WIDGET)
+}
+
+pub fn set_taskbar_widget(on: bool) {
+    write(TASKBAR_WIDGET, REG_DWORD, &(on as u32).to_le_bytes());
+}
+
 /// How icons are drawn (default: device symbol + level bar).
 pub fn icon_style() -> Style {
     match read_dword(ICON_STYLE) {
         Some(1) => Style::SymbolFill,
         Some(2) => Style::SymbolDigits,
         Some(3) => Style::Digits,
+        Some(4) => Style::Ring,
         _ => Style::SymbolBar,
     }
 }
@@ -37,6 +48,7 @@ pub fn set_icon_style(style: Style) {
         Style::SymbolFill => 1,
         Style::SymbolDigits => 2,
         Style::Digits => 3,
+        Style::Ring => 4,
     };
     write(ICON_STYLE, REG_DWORD, &v.to_le_bytes());
 }

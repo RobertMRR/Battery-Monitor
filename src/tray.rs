@@ -18,12 +18,14 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::devices::{Battery, Provider};
 use crate::hid::wide;
-use crate::{icon, settings, startup};
+use crate::{icon, settings, startup, widget};
 
 const WM_TRAY: u32 = WM_APP + 1;
 const WM_RESULTS: u32 = WM_APP + 2;
 const TIMER_POLL: usize = 1;
 const TIMER_SOON: usize = 2;
+const TIMER_WIDGET: usize = 3; // keeps the taskbar widget in place
+const TIMER_BALLOON: usize = 4; // removes the temporary icon a low-battery warning needed in widget mode
 const POLL_MS: u32 = 60_000;
 const SOON_MS: u32 = 2_500;
 const NOTIFY_BELOW: u8 = 15;
@@ -34,6 +36,7 @@ const CMD_STARTUP: usize = 2;
 const CMD_EXIT: usize = 3;
 const CMD_SEPARATE: usize = 4;
 const CMD_AUTO: usize = 5;
+const CMD_WIDGET: usize = 6;
 const CMD_STYLE_BASE: usize = 50; // + index into icon::Style::ALL
 const CMD_PIN_BASE: usize = 100; // + index into the device list
 
@@ -65,6 +68,13 @@ struct App {
     pinned: Option<String>,
     /// How icons are drawn.
     style: icon::Style,
+    /// Show on the taskbar itself (widget) instead of in the notification area.
+    use_widget: bool,
+    widget: Option<widget::Widget>,
+    /// A temporary tray icon is up for a low-battery warning (widget mode has no icon of its own).
+    balloon_icon: bool,
+    /// No poll has finished yet.
+    searching: bool,
 }
 
 thread_local! {
@@ -123,10 +133,15 @@ pub fn run(providers: Vec<Box<dyn Provider>>) {
                 separate: settings::separate_icons(),
                 pinned: settings::icon_device(),
                 style: settings::icon_style(),
+                use_widget: settings::taskbar_widget(),
+                widget: None,
+                balloon_icon: false,
+                searching: true,
             })
         });
-        with_app(|app| app.show_placeholder("Battery Monitor — looking for devices…"));
+        with_app(|app| app.apply(Vec::new()));
         SetTimer(hwnd, TIMER_POLL, POLL_MS, None);
+        SetTimer(hwnd, TIMER_WIDGET, 1000, None);
         SetTimer(hwnd, TIMER_SOON, 300, None);
 
         let mut msg: MSG = std::mem::zeroed();
@@ -140,10 +155,26 @@ pub fn run(providers: Vec<Box<dyn Provider>>) {
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_TIMER => {
-            if wparam == TIMER_SOON {
-                unsafe { KillTimer(hwnd, TIMER_SOON) };
+            match wparam {
+                TIMER_WIDGET => {
+                    with_app(App::tick_widget);
+                }
+                TIMER_BALLOON => {
+                    unsafe { KillTimer(hwnd, TIMER_BALLOON) };
+                    with_app(|app| {
+                        app.balloon_icon = false;
+                        if app.widget.is_some() {
+                            app.remove_icon(MAIN_ID);
+                        }
+                    });
+                }
+                _ => {
+                    if wparam == TIMER_SOON {
+                        unsafe { KillTimer(hwnd, TIMER_SOON) };
+                    }
+                    with_app(App::start_poll);
+                }
             }
-            with_app(App::start_poll);
             0
         }
         WM_RESULTS => {
@@ -151,6 +182,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             let results = *unsafe { Box::from_raw(lparam as *mut Vec<Battery>) };
             with_app(|app| {
                 app.polling.store(false, Ordering::SeqCst);
+                app.searching = false;
                 app.apply(results);
                 if std::mem::take(&mut app.poll_again) {
                     app.start_poll();
@@ -189,6 +221,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     for (_, i) in app.icons.drain() {
                         unsafe { DestroyIcon(i.hicon) };
                     }
+                    app.widget = None; // it was a child of the old taskbar
                     app.apply(app.latest.clone());
                 });
                 return 0;
@@ -230,6 +263,86 @@ impl App {
     }
 
     fn apply(&mut self, readings: Vec<Battery>) {
+        self.low_warned.retain(|id| readings.iter().any(|b| &b.id == id));
+        if self.use_widget && self.ensure_widget() {
+            // Widget mode: no tray icons (except a temporary one while a low-battery warning is up).
+            let ids: Vec<String> =
+                self.icons.keys().filter(|id| !(self.balloon_icon && *id == MAIN_ID)).cloned().collect();
+            for id in ids {
+                self.remove_icon(&id);
+            }
+            self.show_widget(&readings);
+        } else {
+            self.widget = None;
+            self.apply_tray(&readings);
+        }
+        for b in &readings {
+            self.maybe_warn_low(b);
+        }
+        self.latest = readings;
+    }
+
+    fn ensure_widget(&mut self) -> bool {
+        if self.widget.is_none() {
+            self.widget = widget::create(self.hwnd, WM_TRAY);
+        }
+        self.widget.is_some()
+    }
+
+    fn placeholder_tip(&self) -> &'static str {
+        if self.searching {
+            "Battery Monitor — looking for devices…"
+        } else {
+            "Battery Monitor — no wireless devices found"
+        }
+    }
+
+    fn show_widget(&mut self, readings: &[Battery]) {
+        let item = |b: &Battery| icon::WidgetItem {
+            percent: Some(b.percent),
+            charging: b.charging,
+            stale: b.stale,
+            kind: Some(b.kind),
+        };
+        let shown = self.shown(readings);
+        let (items, tip): (Vec<icon::WidgetItem>, String) = match shown {
+            None => (
+                vec![icon::WidgetItem { percent: None, charging: false, stale: false, kind: None }],
+                self.placeholder_tip().to_string(),
+            ),
+            Some(s) if !self.separate => (vec![item(s)], summary(readings, s)),
+            Some(s) => (readings.iter().map(item).collect(), summary(readings, s)),
+        };
+        let light = icon::taskbar_is_light();
+        let style = self.style;
+        if let Some(w) = self.widget.as_mut() {
+            let canvas = icon::render_widget(&items, style, w.height(), w.scale(), light);
+            w.show(&canvas, &tip);
+        }
+    }
+
+    /// Once a second: keep the widget in place, re-render after a DPI change, and recreate it when the taskbar comes
+    /// back (Explorer restart) or becomes available.
+    fn tick_widget(&mut self) {
+        let state = self.widget.as_mut().map(|w| w.reposition());
+        match state {
+            Some(widget::State::Ok) => {}
+            Some(widget::State::DpiChanged) => self.apply(self.latest.clone()),
+            Some(widget::State::Gone) => {
+                self.widget = None;
+                self.apply(self.latest.clone());
+            }
+            None if self.use_widget => {
+                if let Some(w) = widget::create(self.hwnd, WM_TRAY) {
+                    self.widget = Some(w);
+                    self.apply(self.latest.clone());
+                }
+            }
+            None => {}
+        }
+    }
+
+    fn apply_tray(&mut self, readings: &[Battery]) {
         // Per-device icons exist only in one-icon-per-device mode, and only for devices still present.
         let keep: HashSet<&str> =
             if self.separate { readings.iter().map(|b| b.id.as_str()).collect() } else { HashSet::new() };
@@ -238,21 +351,20 @@ impl App {
         for id in gone {
             self.remove_icon(&id);
         }
-        self.low_warned.retain(|id| readings.iter().any(|b| &b.id == id));
 
         let size = unsafe { GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem()) }.max(16) as usize;
         let light = icon::taskbar_is_light();
         if self.separate {
-            for b in &readings {
+            for b in readings {
                 let canvas = icon::render(Some(b.percent), b.charging, b.stale, Some(b.kind), self.style, size, light);
                 self.set_icon(&b.id, icon::to_hicon(&canvas), &describe(b));
             }
             if readings.is_empty() {
-                self.show_placeholder("Battery Monitor — no wireless devices found");
+                self.show_placeholder(self.placeholder_tip());
             } else {
                 self.remove_icon(MAIN_ID);
             }
-        } else if let Some(shown) = self.shown(&readings) {
+        } else if let Some(shown) = self.shown(readings) {
             let canvas = icon::render(
                 Some(shown.percent),
                 shown.charging,
@@ -262,16 +374,11 @@ impl App {
                 size,
                 light,
             );
-            let tip = summary(&readings, shown);
+            let tip = summary(readings, shown);
             self.set_icon(MAIN_ID, icon::to_hicon(&canvas), &tip);
         } else {
-            self.show_placeholder("Battery Monitor — no wireless devices found");
+            self.show_placeholder(self.placeholder_tip());
         }
-
-        for b in &readings {
-            self.maybe_warn_low(b);
-        }
-        self.latest = readings;
     }
 
     fn shown<'a>(&self, readings: &'a [Battery]) -> Option<&'a Battery> {
@@ -339,6 +446,22 @@ impl App {
         if b.stale || b.percent > NOTIFY_BELOW || !self.low_warned.insert(b.id.clone()) {
             return;
         }
+        if self.widget.is_some() && !self.icons.contains_key(MAIN_ID) {
+            // Widget mode has no tray icon to attach the warning to: show one for a moment.
+            let size = unsafe { GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem()) }.max(16) as usize;
+            let canvas = icon::render(
+                Some(b.percent),
+                b.charging,
+                false,
+                Some(b.kind),
+                self.style,
+                size,
+                icon::taskbar_is_light(),
+            );
+            self.set_icon(MAIN_ID, icon::to_hicon(&canvas), &describe(b));
+            self.balloon_icon = true;
+            unsafe { SetTimer(self.hwnd, TIMER_BALLOON, 15_000, None) };
+        }
         let Some(uid) = self.icons.get(&b.id).or_else(|| self.icons.get(MAIN_ID)).map(|i| i.uid) else { return };
         let mut d = self.base_data(uid);
         d.uFlags = NIF_INFO;
@@ -349,6 +472,7 @@ impl App {
     }
 
     fn remove_all(&mut self) {
+        self.widget = None; // restores the taskbar layout it adjusted
         let ids: Vec<String> = self.icons.keys().cloned().collect();
         for id in ids {
             self.remove_icon(&id);
@@ -396,8 +520,8 @@ fn copy_wide(field: &mut [u16], s: &str) {
 fn show_menu(hwnd: HWND) {
     // Build the menu from current state, then release the state before TrackPopupMenu: it runs a modal loop that
     // keeps dispatching our messages (timers, results).
-    let Some((latest, separate, pinned, style)) =
-        with_app(|app| (app.latest.clone(), app.separate, app.pinned.clone(), app.style))
+    let Some((latest, separate, pinned, style, use_widget)) =
+        with_app(|app| (app.latest.clone(), app.separate, app.pinned.clone(), app.style, app.use_widget))
     else {
         return;
     };
@@ -433,6 +557,7 @@ fn show_menu(hwnd: HWND) {
             add_to(styles, MF_STRING | check(*st == style), CMD_STYLE_BASE + i, label);
         }
         add(MF_STRING | MF_POPUP, styles as usize, "Icon style");
+        add(MF_STRING | check(use_widget), CMD_WIDGET, "Show on the taskbar");
         add(MF_STRING | check(separate), CMD_SEPARATE, "One icon per device");
         AppendMenuW(menu, MF_SEPARATOR, 0, null());
         add(MF_STRING, CMD_REFRESH, "Refresh now");
@@ -469,6 +594,13 @@ fn show_menu(hwnd: HWND) {
                 settings::set_icon_style(style);
                 with_app(|app| {
                     app.style = style;
+                    app.apply(app.latest.clone());
+                });
+            }
+            CMD_WIDGET => {
+                settings::set_taskbar_widget(!use_widget);
+                with_app(|app| {
+                    app.use_widget = !use_widget;
                     app.apply(app.latest.clone());
                 });
             }

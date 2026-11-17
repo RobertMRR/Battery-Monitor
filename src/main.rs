@@ -4,16 +4,19 @@
 //!   --probe [--verbose]   what each reader sees (with raw protocol traffic)
 //!   --list-hid            every HID collection: VID:PID, usage, report sizes, product name
 //!   --preview <file.bmp>  render sample icons (dev aid)
+//!   --preview-widget <file.bmp>  render the taskbar widget in every style (dev aid)
 
 #![windows_subsystem = "windows"]
 
 mod devices;
 mod diag;
+mod glyphs;
 mod hid;
 mod icon;
 mod settings;
 mod startup;
 mod tray;
+mod widget;
 
 use std::ptr::null;
 
@@ -32,6 +35,9 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() == 2 && args[0] == "--preview" {
         std::process::exit(if icon::write_preview(&args[1]).is_ok() { 0 } else { 1 });
+    }
+    if args.len() == 2 && args[0] == "--preview-widget" {
+        std::process::exit(if icon::write_widget_preview(&args[1]).is_ok() { 0 } else { 1 });
     }
     if args.iter().any(|a| a == "--probe" || a == "--list-hid") {
         // A GUI-subsystem exe has no console. Without redirection, borrow the terminal's; with `| Out-File`
