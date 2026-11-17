@@ -1,0 +1,29 @@
+# Pull requests are squash-merged, so the PR title becomes the commit message on main. It must follow
+# Conventional Commits (https://www.conventionalcommits.org/), e.g. "feat(razer): support the Basilisk V3 Pro".
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  conventional-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}   # via env, never pasted into the script
+        shell: bash
+        run: |
+          types='feat|fix|perf|refactor|docs|test|build|ci|chore|revert|style'
+          if [[ "$TITLE" =~ ^($types)(\([a-z0-9._/-]+\))?!?:\ [^[:space:]].* ]]; then
+            echo "OK: $TITLE"
+          else
+            echo "::error::PR title \"$TITLE\" isn't a Conventional Commit. Use \"<type>(<optional scope>): <summary>\","
+            echo "::error::with type one of: ${types//|/, }. Examples: \"fix(corsair): show the model name\","
+            echo "::error::\"feat: taskbar widget\", \"chore(release): 0.4.0\". Add ! before : for a breaking change."
+            exit 1
+          fi

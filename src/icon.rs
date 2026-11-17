@@ -355,9 +355,14 @@ pub fn render_widget(items: &[WidgetItem], style: Style, height: usize, scale: f
 
     let label = |it: &WidgetItem| it.percent.filter(|_| with_text).map(|p| format!("{p}%"));
     let font = TEXT_FONT.as_ref();
+    // Charging gets a blue lightning bolt after the number (colour alone is easy to miss next to a full bar).
+    let bolt = (font_px * 0.95).round();
+    let bolt_w = |it: &WidgetItem| if it.charging && ICON_FONT.is_some() { 2.0 * scale + bolt } else { 0.0 };
     let widths: Vec<f32> = items
         .iter()
-        .map(|it| icon as f32 + label(it).map_or(0.0, |t| gap + font.map_or(0.0, |f| text_width(f, &t, font_px))))
+        .map(|it| {
+            icon as f32 + label(it).map_or(0.0, |t| gap + font.map_or(0.0, |f| text_width(f, &t, font_px))) + bolt_w(it)
+        })
         .collect();
     let width = (pad * 2.0 + widths.iter().sum::<f32>() + item_gap * items.len().saturating_sub(1) as f32).ceil();
 
@@ -383,6 +388,13 @@ pub fn render_widget(items: &[WidgetItem], style: Style, height: usize, scale: f
                 if low { LOW } else { fg },
                 alpha,
             );
+        }
+        if it.charging {
+            // Lightning bolt (Segoe Fluent Icons / MDL2 "LightningBolt") at the end of the item.
+            let bx = x + w - bolt;
+            let area = Area { x: bx, y: (height as f32 - bolt) / 2.0, w: bolt, h: bolt };
+            let alpha = if it.stale { 110.0 / 255.0 } else { 1.0 };
+            draw_fitted(&mut c, ICON_FONT.as_ref(), "\u{E945}", area, None, CHARGING, alpha, true);
         }
         x += w + item_gap;
     }

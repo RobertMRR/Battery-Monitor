@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-17
+
+### Added
+- Taskbar widget: a blue lightning bolt next to the percentage of a charging device (the blue level colour alone was
+  easy to miss).
+
+### Fixed
+- Ajazz AJ159P on the `248A:5B2F` receiver shows as "Ajazz AJ159P" instead of "Wireless mouse M620". Battery level
+  and charging state confirmed on hardware.
+- Razer mice charging on the cable (e.g. Viper V3 Pro) could vanish until the app was restarted: if the mouse didn't
+  answer the first query right after being plugged in, it was treated as a device without a battery for good. It is
+  now asked again on the next poll. Headsets that don't answer right after being plugged in are also retried on the
+  next poll (was: after about 2 minutes, or up to 10 after re-plugging).
+- A device charging on its cable no longer also shows a faded "asleep" entry for its wireless dongle.
+
 ## [0.3.0] - 2026-11-17
 
 ### Added
@@ -50,7 +65,8 @@ First public release.
   - Any Bluetooth device whose battery Windows shows in Settings
 - Diagnostics for bug reports: `--probe --verbose`, `--list-hid`.
 
-[Unreleased]: https://github.com/RobertMRR/Battery-Monitor/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/RobertMRR/Battery-Monitor/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/RobertMRR/Battery-Monitor/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/RobertMRR/Battery-Monitor/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/RobertMRR/Battery-Monitor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/RobertMRR/Battery-Monitor/releases/tag/v0.1.0

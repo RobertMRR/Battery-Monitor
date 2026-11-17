@@ -250,9 +250,7 @@ impl App {
                     }
                 }
             }
-            // The same device seen twice (e.g. via Bluetooth and a dedicated reader): keep the first.
-            let mut seen = HashSet::new();
-            all.retain(|b| seen.insert(b.id.clone()));
+            crate::devices::merge(&mut all);
             all.sort_by_key(|b| (b.kind, b.name.to_lowercase()));
 
             let ptr = Box::into_raw(Box::new(all));
