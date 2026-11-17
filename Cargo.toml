@@ -2,7 +2,7 @@
 name = "battery-monitor"
 # The release version. To release: bump this, add a CHANGELOG.md section, commit, tag "v<version>" and push the tag
 # (the release workflow refuses tags that don't match this).
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Shows the battery level of wireless devices in the Windows taskbar"

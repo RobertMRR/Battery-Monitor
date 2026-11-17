@@ -87,6 +87,12 @@ log: that's what's needed to fix it.
 - Virtuoso RGB Wireless XT / SE, VOID Wireless V2, Virtuoso MAX Wireless, HS80 MAX Wireless
 - Experimental: other recent Corsair wireless devices, such as Slipstream mice and keyboards
 
+**Ajazz**: over the 2.4 GHz receiver or the cable
+- AJ179 / AJ179P (dual mode and PAW3950 versions)
+- AJ159P, PAW3950 version ("AJ159P-3950")
+- Tip: these are the Ajazz mice whose official web configurator is *ajazz.xcgaming.net*. Other Ajazz models use
+  different protocols, see *Not supported*.
+
 **Bluetooth devices of any brand**
 - Anything whose battery level Windows already shows in *Settings › Bluetooth & devices*: many earbuds and
   headphones, and most Bluetooth mice and keyboards.
@@ -102,6 +108,8 @@ log: that's what's needed to fix it.
 - **Logitech ASTRO A50** (uses its own protocol). G PRO X 2 LIGHTSPEED units on very old firmware: update the headset
   in G HUB first.
 - **HyperX Cloud II Wireless** (Kingston-branded, `0951:1718`), **HyperX Cloud III**.
+- **Other Ajazz mice** (e.g. AJ159 PRO / APEX, AJ159P MC PRO, AJ159 V2, AJ199): they use other chips and protocols.
+  Over **Bluetooth** they can work through the Bluetooth support above, if Windows shows their battery in Settings.
 - Wired headsets: they have no battery.
 
 <details>
@@ -118,6 +126,7 @@ log: that's what's needed to fix it.
 | SteelSeries, HyperX | Per-model status requests on the vendor HID interface |
 | Corsair VOID family | `0xC9 0x64` request, status input report `0x64` |
 | Corsair Bragi | Property `0x0F` (level, tenths of a percent) and `0x10` (charge state) |
+| Ajazz AJ179, AJ159P-3950 | Command `0x10` (device info) on interface 2: model ID bytes 4–7, charging byte 12, battery byte 13, connected byte 14 |
 | Bluetooth | Windows' `DEVPKEY_Bluetooth_Battery` device property |
 
 </details>
@@ -207,6 +216,8 @@ reverse-engineering work:
 - [Solaar](https://github.com/pwr-Solaar/Solaar): Logitech HID++ 2.0
 - [OpenRazer](https://github.com/openrazer/openrazer): Razer protocol
 - [ckb-next](https://github.com/ckb-next/ckb-next): Corsair Bragi
+- [aj179-linux](https://github.com/Rockeyxx/aj179-linux): Ajazz AJ179 (and with it the AJ159P-3950, which shares its
+  protocol per Ajazz's own web configurator)
 - Linux `hid-playstation` driver: DualSense report layout
 
 ## License

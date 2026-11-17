@@ -1,9 +1,11 @@
-//! Table-driven readers for vendor headset protocols. Each `Spec` names the USB IDs, which HID collection to talk
-//! to, and a function that asks for the battery. Requests are in hidapi form (first byte = report ID), see `hid`.
+//! Table-driven readers for simple request/reply vendor protocols (mostly headsets, plus a few mice and dongles).
+//! Each `Spec` names the USB IDs, which HID collection to talk to, and a function that asks for the battery.
+//! Requests are in hidapi form (first byte = report ID), see `hid`.
 //!
-//! Protocol facts (command bytes, offsets, product IDs) come from HeadsetControl, Solaar and ckb-next; the code
-//! is an independent implementation.
+//! Protocol facts (command bytes, offsets, product IDs) come from HeadsetControl, Solaar, ckb-next and
+//! aj179-linux; the code is an independent implementation.
 
+pub mod ajazz;
 pub mod centurion;
 pub mod corsair;
 pub mod hyperx;
@@ -25,17 +27,21 @@ pub struct Read {
     pub charging: bool,
     /// The receiver answered, but the headset itself is off or out of range.
     pub offline: bool,
+    /// The device is asleep and `percent` is the last level the receiver knows (shown faded).
+    pub asleep: bool,
+    /// Model name reported by the device itself, when one receiver/ID serves several models.
+    pub model: Option<&'static str>,
 }
 
 impl Read {
     pub fn level(percent: u8, charging: bool) -> Option<Read> {
-        Some(Read { percent: Some(percent.min(100)), charging, offline: false })
+        Some(Read { percent: Some(percent.min(100)), charging, offline: false, asleep: false, model: None })
     }
     pub fn charging_unknown_level() -> Option<Read> {
-        Some(Read { percent: None, charging: true, offline: false })
+        Some(Read { percent: None, charging: true, offline: false, asleep: false, model: None })
     }
     pub fn off() -> Option<Read> {
-        Some(Read { percent: None, charging: false, offline: true })
+        Some(Read { percent: None, charging: false, offline: true, asleep: false, model: None })
     }
 }
 
@@ -179,13 +185,14 @@ impl Provider for HeadsetProvider {
             let Some(percent) = r.percent.or_else(|| self.last_percent.get(&id).copied()) else { continue };
             self.last_percent.insert(id.clone(), percent);
 
-            let name = spec
-                .name
+            let name = r
+                .model
+                .or(spec.name)
                 .map(str::to_string)
                 .or_else(|| list.iter().find_map(|c| c.product.clone()))
                 .unwrap_or_else(|| spec.brand.to_string());
             let kind = if spec.name.is_none() { guess_kind(&name, spec.kind) } else { spec.kind };
-            out.push(Battery { id, name, kind, percent, charging: r.charging, stale: false });
+            out.push(Battery { id, name, kind, percent, charging: r.charging, stale: r.asleep });
         }
         self.specs = specs;
         out
