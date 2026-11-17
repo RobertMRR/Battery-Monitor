@@ -1,7 +1,7 @@
 //! Razer wireless mice/keyboards via Razer's 90-byte HID feature report protocol (as documented by OpenRazer).
 //! Battery level: command class 0x07, id 0x80 -> arguments[1] in 0..255. Charging: 0x07/0x84 -> arguments[1].
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -21,8 +21,20 @@ const TRANSACTION_IDS: [u8; 3] = [0x1F, 0xFF, 0x3F];
 #[derive(Default)]
 pub struct Razer {
     routes: HashMap<u16, (String, u8)>, // pid -> (collection path, transaction id)
-    unsupported: HashSet<u16>,
+    /// Consecutive polls in which a device answered nothing at all (not even "asleep"). After 3 it's only retried
+    /// every 10th poll (e.g. a Razer device without a battery), so a mouse that just got plugged in and wasn't ready
+    /// for the first query is still read on the next poll. Forgotten when the device is unplugged.
+    misses: HashMap<u16, u32>,
+    polls: u32,
     last_known: HashMap<u16, Battery>,
+}
+
+/// What one product id answered.
+enum Answer {
+    Level(u8, bool),
+    /// The dongle is there but the device isn't answering (asleep, off, or on its cable instead).
+    Asleep,
+    Nothing,
 }
 
 impl Provider for Razer {
@@ -38,15 +50,23 @@ impl Provider for Razer {
 
         let mut pids: Vec<u16> = by_pid.keys().copied().collect();
         pids.sort();
+        self.polls = self.polls.wrapping_add(1);
         let mut out = Vec::new();
         for pid in pids {
-            if self.unsupported.contains(&pid) {
+            let misses = self.misses.get(&pid).copied().unwrap_or(0);
+            if misses >= 3 && self.polls % 10 != 0 {
                 continue;
             }
             let collections = &by_pid[&pid];
             let name = collections.iter().find_map(|c| c.product.clone()).unwrap_or_else(|| format!("Razer {pid:04X}"));
-            match self.read(pid, collections) {
-                Some((level, charging)) => {
+            let answer = self.read(pid, collections);
+            if matches!(answer, Answer::Nothing) {
+                self.misses.insert(pid, misses + 1);
+            } else {
+                self.misses.remove(&pid);
+            }
+            match answer {
+                Answer::Level(level, charging) => {
                     let b = Battery {
                         id: format!("razer:{pid:04x}"),
                         kind: guess_kind(&name, Kind::Mouse),
@@ -58,7 +78,7 @@ impl Provider for Razer {
                     self.last_known.insert(pid, b.clone());
                     out.push(b);
                 }
-                None => {
+                Answer::Asleep | Answer::Nothing => {
                     if let Some(last) = self.last_known.get(&pid) {
                         out.push(Battery { stale: true, ..last.clone() });
                     }
@@ -66,20 +86,21 @@ impl Provider for Razer {
             }
         }
         self.last_known.retain(|pid, _| by_pid.contains_key(pid));
+        self.misses.retain(|pid, _| by_pid.contains_key(pid));
         out
     }
 }
 
 impl Razer {
-    fn read(&mut self, pid: u16, collections: &[HidInfo]) -> Option<(u8, bool)> {
+    fn read(&mut self, pid: u16, collections: &[HidInfo]) -> Answer {
         if let Some((path, tx)) = self.routes.get(&pid).cloned() {
             if collections.iter().any(|c| c.path == path) {
                 let (status, level, charging) = query(&path, tx);
                 if status == STATUS_OK {
-                    return Some((level, charging));
+                    return Answer::Level(level, charging);
                 }
                 if status == STATUS_TIMEOUT {
-                    return None;
+                    return Answer::Asleep;
                 }
             }
             self.routes.remove(&pid); // re-plugged or stopped answering: rediscover
@@ -91,7 +112,7 @@ impl Razer {
                 let (status, level, charging) = query(&c.path, tx);
                 if status == STATUS_OK {
                     self.routes.insert(pid, (c.path.clone(), tx));
-                    return Some((level, charging));
+                    return Answer::Level(level, charging);
                 }
                 if status == STATUS_TIMEOUT {
                     // The dongle accepted the request; the device just isn't answering.
@@ -100,11 +121,8 @@ impl Razer {
                 }
             }
         }
-        // Nothing answered and nothing reported "asleep": no battery here (e.g. a microphone).
-        if !saw_timeout {
-            self.unsupported.insert(pid);
-        }
-        None
+        // Nothing answered (a device without a battery, or one still starting up) or only "asleep".
+        if saw_timeout { Answer::Asleep } else { Answer::Nothing }
     }
 }
 

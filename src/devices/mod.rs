@@ -9,7 +9,9 @@ pub mod maxxter;
 pub mod razer;
 pub mod xinput;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+use std::collections::HashSet;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Kind {
     Gamepad,
     Mouse,
@@ -53,6 +55,17 @@ pub fn all() -> Vec<Box<dyn Provider>> {
     ]
 }
 
+/// Cleans up one poll's combined results from all providers.
+/// - The same id twice (e.g. via Bluetooth and a dedicated reader): keep the first.
+/// - A device charging on its cable often shows up twice: answering under its cable id, and faded ("asleep", last
+///   known level) under its dongle id. Keep only the live one.
+pub fn merge(all: &mut Vec<Battery>) {
+    let mut seen = HashSet::new();
+    all.retain(|b| seen.insert(b.id.clone()));
+    let live: HashSet<(Kind, String)> = all.iter().filter(|b| !b.stale).map(|b| (b.kind, b.name.clone())).collect();
+    all.retain(|b| !b.stale || !live.contains(&(b.kind, b.name.clone())));
+}
+
 /// Best guess from a product name, for readers that cover many kinds of device.
 pub fn guess_kind(name: &str, fallback: Kind) -> Kind {
     let n = name.to_lowercase();
@@ -88,7 +101,30 @@ pub fn guess_kind(name: &str, fallback: Kind) -> Kind {
 
 #[cfg(test)]
 mod tests {
-    use super::{Kind, guess_kind};
+    use super::{Battery, Kind, guess_kind, merge};
+
+    fn battery(id: &str, stale: bool) -> Battery {
+        Battery {
+            id: id.into(),
+            name: "Razer Viper V3 Pro".into(),
+            kind: Kind::Mouse,
+            percent: 71,
+            charging: !stale,
+            stale,
+        }
+    }
+
+    #[test]
+    fn charging_on_the_cable_hides_the_sleeping_dongle_entry() {
+        let mut all = vec![battery("razer:00c1", true), battery("razer:00c0", false), battery("razer:00c0", false)];
+        merge(&mut all);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, "razer:00c0");
+        // A sleeping mouse with no live twin stays (faded).
+        let mut asleep = vec![battery("razer:00c1", true)];
+        merge(&mut asleep);
+        assert_eq!(asleep.len(), 1);
+    }
 
     #[test]
     fn kind_from_product_name() {

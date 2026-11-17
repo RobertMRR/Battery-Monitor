@@ -3,6 +3,4 @@
 # Local notes for Claude Code; not part of the published repo.
 CLAUDE.md
 # Diagnostic logs from --probe / --list-hid (may describe your devices); not part of the repo.
-/hid.txt
-/probe.txt
-/void.txt
+/*.txt

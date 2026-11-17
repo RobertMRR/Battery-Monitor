@@ -29,6 +29,7 @@ static SEQUENCE: AtomicU8 = AtomicU8::new(0);
 fn model_name(code: &str) -> String {
     match code {
         "M802" => "Delux M800 Pro".into(),
+        "M620" => "Ajazz AJ159P".into(),       // confirmed on hardware
         _ => format!("Wireless mouse {code}"), // e.g. an AJ159P: see `--probe --verbose` for its code
     }
 }
@@ -174,6 +175,7 @@ mod tests {
     #[test]
     fn names() {
         assert_eq!(model_name("M802"), "Delux M800 Pro");
+        assert_eq!(model_name("M620"), "Ajazz AJ159P");
         assert_eq!(model_name("P631"), "Wireless mouse P631");
     }
 }

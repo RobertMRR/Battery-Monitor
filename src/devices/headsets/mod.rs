@@ -168,11 +168,11 @@ impl Provider for HeadsetProvider {
                 None => 0,
             };
             let Some(r) = self.read(key, spec, list) else {
-                // Nothing answered (unsupported model, or no battery at all): retry less and less often, up to every
-                // 10 minutes, so devices like wired keyboards don't cost a timeout on every poll.
+                // Nothing answered (still starting up after being plugged in, unsupported model, or no battery at
+                // all): the next poll tries again, then less and less often, up to about every 10 minutes, so devices
+                // like wired keyboards don't cost a timeout on every poll.
                 let m = misses + 1;
-                self.backoff
-                    .insert(key.clone(), (m, Instant::now() + Duration::from_secs(60 * (m * m).min(10) as u64)));
+                self.backoff.insert(key.clone(), (m, Instant::now() + retry_after(m)));
                 continue;
             };
             self.backoff.remove(key);
@@ -195,8 +195,17 @@ impl Provider for HeadsetProvider {
             out.push(Battery { id, name, kind, percent, charging: r.charging, stale: r.asleep });
         }
         self.specs = specs;
+        // Unplugged: start afresh when it comes back (e.g. a headset moved from its dongle to the cable).
+        self.backoff.retain(|k, _| devices.iter().any(|(d, _)| d == k));
         out
     }
+}
+
+/// Back-off after `misses` polls in a row without an answer. A bit under whole minutes, so the 60 s poll that comes
+/// due right after the deadline isn't skipped.
+fn retry_after(misses: u32) -> Duration {
+    let minutes = ((misses - 1) * (misses - 1)).min(10) as u64;
+    Duration::from_secs((60 * minutes).saturating_sub(10))
 }
 
 /// Sends `request` and returns the first reply that satisfies `expected`. If none does before the timeout, falls
