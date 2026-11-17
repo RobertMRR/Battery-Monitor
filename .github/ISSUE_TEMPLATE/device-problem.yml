@@ -1,0 +1,44 @@
+name: Device not shown / wrong battery level
+description: A wireless device is missing from the taskbar, or shows the wrong number
+labels: [device]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Brand and exact model, e.g. "Logitech G PRO X 2 LIGHTSPEED"
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: How is it connected?
+      options: [USB dongle / receiver, Bluetooth, USB cable]
+    validations:
+      required: true
+  - type: input
+    id: actual
+    attributes:
+      label: What does the vendor's own app (G HUB, Synapse, iCUE, GG…) say the battery is?
+  - type: textarea
+    id: probe
+    attributes:
+      label: Diagnostic output
+      description: |
+        With the device switched on, open PowerShell in the folder with the exe and run:
+        `.\BatteryMonitor-<version>-x64.exe --probe --verbose | Out-File probe.txt`
+        then paste the contents of probe.txt.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: hid
+    attributes:
+      label: HID device list
+      description: 'Run `.\BatteryMonitor-<version>-x64.exe --list-hid | Out-File hid.txt` and paste the lines for your device''s brand.'
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Battery Monitor version
+      description: Shown at the bottom of the tray icon's menu

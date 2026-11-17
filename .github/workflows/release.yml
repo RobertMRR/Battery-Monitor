@@ -1,0 +1,98 @@
+# Builds the app on GitHub and publishes a release.
+#
+#   1. Bump `version` in Cargo.toml and add a matching "## [x.y.z]" section to CHANGELOG.md; commit.
+#   2. git tag vx.y.z && git push origin vx.y.z
+#      -> checks, builds x64 + ARM64, creates the "vx.y.z" release with the exes, checksums and changelog notes.
+#
+#   Actions tab -> Release -> "Run workflow" -> test build only; the exes are attached to the run as artifacts.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create the release
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - name: Work out version
+        shell: bash
+        run: |
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            v="${GITHUB_REF_NAME#v}"
+            if [[ "$v" != "$cargo_version" ]]; then
+              echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo.toml version $cargo_version. Bump Cargo.toml first."
+              exit 1
+            fi
+            if ! grep -q "^## \[$v\]" CHANGELOG.md; then
+              echo "::error::CHANGELOG.md has no '## [$v]' section."
+              exit 1
+            fi
+          else
+            v="$cargo_version-test.$GITHUB_RUN_NUMBER"
+          fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          echo "BM_VERSION=$v" >> "$GITHUB_ENV"   # compiled into the exe (tray menu, file properties)
+
+      - name: Checks
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --release --locked --all-targets -- -D warnings
+          cargo test --release --locked
+
+      - name: Build x64
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Build ARM64
+        run: cargo build --release --locked --target aarch64-pc-windows-msvc
+
+      - name: Smoke test (the exe starts and can draw icons)
+        shell: pwsh
+        run: |
+          $p = Start-Process target/x86_64-pc-windows-msvc/release/BatteryMonitor.exe -ArgumentList '--preview', "$PWD/preview.bmp" -Wait -PassThru
+          if ($p.ExitCode -ne 0 -or -not (Test-Path preview.bmp)) { throw "BatteryMonitor.exe failed to start (exit $($p.ExitCode))" }
+
+      - name: Collect downloads and release notes
+        shell: bash
+        run: |
+          mkdir release
+          cp target/x86_64-pc-windows-msvc/release/BatteryMonitor.exe  "release/BatteryMonitor-${VERSION}-x64.exe"
+          cp target/aarch64-pc-windows-msvc/release/BatteryMonitor.exe "release/BatteryMonitor-${VERSION}-arm64.exe"
+          (cd release && sha256sum *.exe > SHA256SUMS.txt)
+          {
+            echo "**Download:** \`BatteryMonitor-${VERSION}-x64.exe\` for almost every PC, or \`-arm64.exe\` for ARM laptops"
+            echo "(Snapdragon / Surface Pro X). A single ~0.6 MB file: no installer, nothing else to install. Just run it."
+            echo
+            echo "Windows will warn that the app is from an unknown publisher (it isn't code-signed):"
+            echo "click **More info → Run anyway**. Then see the README for keeping the icon on the taskbar."
+            echo
+            echo "## Changes"
+            # The CHANGELOG section for this version, without its heading.
+            awk -v v="$VERSION" 'index($0, "## [" v "]") == 1 {on=1; next} /^## \[/ {on=0} on' CHANGELOG.md
+          } > release-notes.md
+
+      - name: Upload build (test runs)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: BatteryMonitor-${{ env.VERSION }}
+          path: |
+            release/
+            release-notes.md
+
+      - name: Create GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          body_path: release-notes.md

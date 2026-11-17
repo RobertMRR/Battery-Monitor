@@ -1,0 +1,4 @@
+/target/
+*.bmp
+# Local notes for Claude Code; not part of the published repo.
+CLAUDE.md

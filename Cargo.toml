@@ -1,0 +1,34 @@
+[package]
+name = "battery-monitor"
+# The release version. To release: bump this, add a CHANGELOG.md section, commit, tag "v<version>" and push the tag
+# (the release workflow refuses tags that don't match this).
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Shows the battery level of wireless devices in the Windows taskbar"
+license = "GPL-3.0-or-later"
+publish = false
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[[bin]]
+name = "BatteryMonitor"
+path = "src/main.rs"
+
+[dependencies]
+ab_glyph = { version = "0.2.32", features = ["variable-fonts"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Devices_HumanInterfaceDevice", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Properties", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_System_Registry", "Win32_System_Console", "Win32_UI_Input_XboxController", "Win32_System_LibraryLoader", "Win32_Security"] }
+
+[profile.release]
+opt-level = "s"     # small over fast: this app idles 99.9% of the time
+lto = true
+codegen-units = 1
+strip = true
+
+[build-dependencies]
+winresource = "0.1.34"
+# panic stays "unwind": each device reader runs under catch_unwind so one bug can't stop the others.
