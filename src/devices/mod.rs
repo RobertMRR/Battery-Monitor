@@ -44,6 +44,7 @@ pub fn all() -> Vec<Box<dyn Provider>> {
         Box::new(headsets::HeadsetProvider::new("SteelSeries", headsets::steelseries::specs())),
         Box::new(headsets::HeadsetProvider::new("HyperX", headsets::hyperx::specs())),
         Box::new(headsets::HeadsetProvider::new("Corsair", headsets::corsair::specs())),
+        Box::new(headsets::HeadsetProvider::new("Ajazz", headsets::ajazz::specs())),
         Box::new(bluetooth::Bluetooth),
     ]
 }
