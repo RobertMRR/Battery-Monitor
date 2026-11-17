@@ -3,7 +3,7 @@
 //! * "Bragi" (Virtuoso XT/SE, VOID V2, HS80 MAX, and probably Slipstream mice/keyboards): property reads; battery
 //!   level is property 0x0F in tenths of a percent, charge state is property 0x10.
 //!
-//! Protocol facts as documented by HeadsetControl and ckb-next.
+//! Protocol facts as documented by HeadsetControl, ckb-next and the Linux `hid-corsair-void` driver.
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -15,13 +15,28 @@ use crate::hid::Channel;
 const VID: u16 = 0x1B1C;
 
 const VOID_PIDS: &[u16] = &[
-    0x1B27, 0x0A14, 0x0A16, 0x0A17, 0x0A1D, 0x0A1A, 0x1B2A, 0x1B23, 0x1B29, 0x0A55, 0x0A51, 0x0A52, 0x0A38, 0x0A4F,
-    0x0A2B, 0x0A75, 0x0A56,
+    0x0A0C, 0x0A2B, 0x1B23, 0x1B25, 0x1B27, // VOID Wireless
+    0x0A14, 0x0A16, 0x0A1A, // VOID PRO Wireless
+    0x0A51, 0x0A55, 0x0A75, // VOID ELITE Wireless
+    0x0A38, 0x0A4F, // HS70 / HS70 PRO Wireless
+    0x1B29, 0x1B2A, 0x0A17, 0x0A1D, 0x0A52, 0x0A56, // wired USB models: answer "not connected", so never shown
 ];
+
+/// The dongles report a generic USB name ("HID Interface"), so the model comes from the product ID.
+fn void_model(pid: u16) -> Option<&'static str> {
+    match pid {
+        0x0A0C | 0x0A2B | 0x1B23 | 0x1B25 | 0x1B27 => Some("Corsair VOID Wireless"),
+        0x0A14 | 0x0A16 | 0x0A1A => Some("Corsair VOID PRO Wireless"),
+        0x0A51 | 0x0A55 | 0x0A75 => Some("Corsair VOID ELITE Wireless"),
+        0x0A38 => Some("Corsair HS70 Wireless"),
+        0x0A4F => Some("Corsair HS70 PRO Wireless"),
+        _ => None,
+    }
+}
 
 pub fn specs() -> Vec<Spec> {
     vec![
-        Spec { name: None, ..Spec::new("Corsair", "", VID, VOID_PIDS, 0xFFC5, 0x01, Some(3), void) },
+        Spec::new("Corsair", "Corsair headset", VID, VOID_PIDS, 0xFFC5, 0x01, Some(3), void),
         // Every other Corsair device: try Bragi on its vendor-defined 64-byte collections.
         Spec {
             name: None,
@@ -34,13 +49,23 @@ pub fn specs() -> Vec<Spec> {
 
 fn void(ch: &mut Channel) -> Option<Read> {
     let r = ask(ch, &[0xC9, 0x64], |r| r.len() >= 5 && r[0] == 0x64, TIMEOUT)?;
-    if r.len() < 5 {
+    parse_void(&r).map(|read| Read { model: void_model(ch.info.pid), ..read })
+}
+
+const VOID_CONNECTED: u8 = 0xB1; // 177
+
+/// Status report 0x64: `[2]` level (bit 7 = microphone boom up), `[3]` 0xB1 while the headset is connected,
+/// `[4]` 0 unknown, 1 normal, 2 low, 3 critical, 4 full (on the charger), 5 charging.
+fn parse_void(r: &[u8]) -> Option<Read> {
+    if r.len() < 5 || r[0] != 0x64 {
         return None;
     }
-    let level = r[2] & 0x7F; // bit 7 = microphone boom up
+    let level = r[2] & 0x7F;
+    if r[3] != VOID_CONNECTED || r[4] == 0 {
+        return Read::off(); // headset off / out of range (or a wired model, which has no battery)
+    }
     match r[4] {
-        0 => Read::off(),
-        1 | 2 if level <= 100 => Read::level(level, false),
+        1..=3 if level <= 100 => Read::level(level, false),
         4 | 5 if level <= 100 => Read::level(level, true),
         _ => None,
     }
@@ -108,4 +133,37 @@ fn get_property(ch: &mut Channel, framing: Framing, target: u8, property: u8) ->
         return None; // 0x05 = no such property (e.g. receiver with nothing paired)
     }
     Some(u32::from_le_bytes(reply[at + 1..at + 5].try_into().ok()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_void, void_model};
+
+    fn status(level: u8, connection: u8, state: u8) -> [u8; 5] {
+        [0x64, 0x00, level, connection, state]
+    }
+
+    #[test]
+    fn void_levels_and_states() {
+        let r = parse_void(&status(0x80 | 55, 0xB1, 1)).unwrap(); // mic boom up flag is stripped
+        assert_eq!((r.percent, r.charging, r.offline), (Some(55), false, false));
+        assert_eq!(parse_void(&status(4, 0xB1, 3)).unwrap().percent, Some(4)); // critical: still shown
+        assert!(parse_void(&status(80, 0xB1, 5)).unwrap().charging);
+        assert!(parse_void(&status(100, 0xB1, 4)).unwrap().charging); // full, on the charger
+    }
+
+    #[test]
+    fn void_headset_off_or_unknown() {
+        assert!(parse_void(&status(55, 0x00, 1)).unwrap().offline); // receiver without headset
+        assert!(parse_void(&status(55, 0xB1, 0)).unwrap().offline); // no battery information
+        assert!(parse_void(&status(55, 0xB1, 9)).is_none()); // unknown state
+        assert!(parse_void(&[0x66, 0, 0, 0, 0]).is_none()); // firmware report, not status
+    }
+
+    #[test]
+    fn void_model_names() {
+        assert_eq!(void_model(0x0A55), Some("Corsair VOID ELITE Wireless"));
+        assert_eq!(void_model(0x0A14), Some("Corsair VOID PRO Wireless"));
+        assert_eq!(void_model(0x0A17), None); // wired USB model
+    }
 }

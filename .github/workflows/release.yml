@@ -71,7 +71,7 @@ jobs:
           (cd release && sha256sum *.exe > SHA256SUMS.txt)
           {
             echo "**Download:** \`BatteryMonitor-${VERSION}-x64.exe\` for almost every PC, or \`-arm64.exe\` for ARM laptops"
-            echo "(Snapdragon / Surface Pro X). A single ~0.6 MB file: no installer, nothing else to install. Just run it."
+            echo "(Snapdragon / Surface Pro X). A single ~0.7 MB file: no installer, nothing else to install. Just run it."
             echo
             echo "Windows will warn that the app is from an unknown publisher (it isn't code-signed):"
             echo "click **More info → Run anyway**. Then see the README for keeping the icon on the taskbar."

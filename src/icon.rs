@@ -1,4 +1,4 @@
-//! Draws a tray icon: the percentage as large digits, with a level bar along the bottom.
+//! Draws the tray icons and taskbar-widget items: device symbols, percentages, level bars and level rings.
 
 use std::ptr::{null, null_mut};
 use std::sync::LazyLock;
@@ -9,6 +9,7 @@ use windows_sys::Win32::System::Registry::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::devices::Kind;
+use crate::glyphs::{self, Glyph};
 use crate::hid::wide;
 
 pub const LOW_THRESHOLD: u8 = 20;
@@ -47,6 +48,14 @@ static FONT: LazyLock<Option<FontVec>> = LazyLock::new(|| {
     None
 });
 
+/// The taskbar's UI font for the widget's percentages: Segoe UI Variable (Windows 11), else Segoe UI.
+static TEXT_FONT: LazyLock<Option<FontVec>> = LazyLock::new(|| {
+    let dir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
+    ["SegUIVar.ttf", "segoeui.ttf", "arial.ttf"]
+        .iter()
+        .find_map(|f| FontVec::try_from_vec(std::fs::read(format!(r"{dir}\Fonts\{f}")).ok()?).ok())
+});
+
 /// Windows' icon font: Segoe Fluent Icons (Windows 11), else Segoe MDL2 Assets (Windows 10).
 static ICON_FONT: LazyLock<Option<FontVec>> = LazyLock::new(|| {
     let dir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
@@ -74,20 +83,25 @@ struct Area {
     h: f32,
 }
 
-/// RGBA pixels with straight (non-premultiplied) alpha, as f32 0..1.
+/// RGBA pixels with straight (non-premultiplied) alpha, as f32 0..1. `size` is the width.
 pub struct Canvas {
     pub size: usize,
+    pub height: usize,
     px: Vec<[f32; 4]>,
 }
 
 impl Canvas {
     fn new(size: usize) -> Canvas {
-        Canvas { size, px: vec![[0.0; 4]; size * size] }
+        Canvas::wide(size, size)
+    }
+
+    pub fn wide(width: usize, height: usize) -> Canvas {
+        Canvas { size: width, height, px: vec![[0.0; 4]; width * height] }
     }
 
     /// Source-over blend of `color` at `alpha` (0..1) onto one pixel.
     fn blend(&mut self, x: usize, y: usize, color: Rgb, alpha: f32) {
-        if x >= self.size || y >= self.size || alpha <= 0.0 {
+        if x >= self.size || y >= self.height || alpha <= 0.0 {
             return;
         }
         let d = &mut self.px[y * self.size + x];
@@ -101,7 +115,7 @@ impl Canvas {
 
     /// Fills a rectangle; a fractional right edge gets partial coverage.
     fn fill(&mut self, x: f32, y: usize, w: f32, h: usize, color: Rgb, alpha: f32) {
-        for row in y..(y + h).min(self.size) {
+        for row in y..(y + h).min(self.height) {
             let mut col = x.floor() as usize;
             while (col as f32) < x + w && col < self.size {
                 let cover = ((x + w) - col as f32).min(1.0);
@@ -113,6 +127,101 @@ impl Canvas {
 
     pub fn rgba8(&self, i: usize) -> [u8; 4] {
         self.px[i].map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
+    }
+
+    /// Copies `other` onto this canvas at (`x`, `y`), blending.
+    pub fn draw(&mut self, other: &Canvas, x: usize, y: usize) {
+        for oy in 0..other.height {
+            for ox in 0..other.size {
+                let p = other.px[oy * other.size + ox];
+                if p[3] > 0.0 {
+                    let rgb = (p[0] * 255.0, p[1] * 255.0, p[2] * 255.0);
+                    self.blend(x + ox, y + oy, (rgb.0 as u8, rgb.1 as u8, rgb.2 as u8), p[3]);
+                }
+            }
+        }
+    }
+
+    /// Strokes a Lucide glyph (24x24 units) fitted into the square `area`, with round caps and joins.
+    fn stroke(&mut self, glyph: Glyph, area: Area, color: Rgb, alpha: f32, width_px: f32) {
+        let scale = area.w.min(area.h) / 24.0;
+        let (ox, oy) = (area.x + (area.w - 24.0 * scale) / 2.0, area.y + (area.h - 24.0 * scale) / 2.0);
+        let segments: Vec<((f32, f32), (f32, f32))> = glyph
+            .iter()
+            .flat_map(|line| {
+                let pts: Vec<(f32, f32)> = line.iter().map(|&(x, y)| (ox + x * scale, oy + y * scale)).collect();
+                // A one-point "line" (Lucide's dots) is a zero-length segment: it still gets a round cap.
+                if pts.len() == 1 { vec![(pts[0], pts[0])] } else { pts.windows(2).map(|w| (w[0], w[1])).collect() }
+            })
+            .collect();
+        let half = width_px / 2.0;
+        let (x0, y0) = ((area.x - half).floor().max(0.0) as usize, (area.y - half).floor().max(0.0) as usize);
+        let (x1, y1) = (
+            ((area.x + area.w + half).ceil() as usize).min(self.size),
+            ((area.y + area.h + half).ceil() as usize).min(self.height),
+        );
+        for py in y0..y1 {
+            for px in x0..x1 {
+                let p = (px as f32 + 0.5, py as f32 + 0.5);
+                let d = segments.iter().map(|&(a, b)| segment_distance(p, a, b)).fold(f32::MAX, f32::min);
+                let cover = (half + 0.5 - d).clamp(0.0, 1.0);
+                if cover > 0.0 {
+                    self.blend(px, py, color, cover * alpha);
+                }
+            }
+        }
+    }
+
+    /// A ring centred at (`cx`, `cy`): the first `fraction` of it (clockwise from 12 o'clock) in `arc`, the rest in
+    /// `track`. Anti-aliased at both edges and at the arc's end.
+    #[allow(clippy::too_many_arguments)]
+    fn ring(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        thickness: f32,
+        fraction: f32,
+        arc: (Rgb, f32),
+        track: (Rgb, f32),
+    ) {
+        let full = std::f32::consts::TAU;
+        for py in 0..self.height {
+            for px in 0..self.size {
+                let (dx, dy) = (px as f32 + 0.5 - cx, py as f32 + 0.5 - cy);
+                let dist = (dx * dx + dy * dy).sqrt();
+                let cover = (thickness / 2.0 + 0.5 - (dist - radius).abs()).clamp(0.0, 1.0);
+                if cover <= 0.0 {
+                    continue;
+                }
+                let angle = dx.atan2(-dy).rem_euclid(full); // 0 at 12 o'clock, clockwise
+                // How far (in pixels along the ring) this pixel is inside the arc; soft over one pixel.
+                let along = ((fraction * full - angle) * dist + 0.5).clamp(0.0, 1.0);
+                let start = (angle * dist + 0.5).clamp(0.0, 1.0); // soften the 12 o'clock start too
+                let lit = if fraction >= 1.0 { 1.0 } else { along * start };
+                self.blend(px, py, track.0, cover * track.1 * (1.0 - lit));
+                self.blend(px, py, arc.0, cover * arc.1 * lit);
+            }
+        }
+    }
+}
+
+fn segment_distance(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
+    let (abx, aby) = (b.0 - a.0, b.1 - a.1);
+    let len2 = abx * abx + aby * aby;
+    let t = if len2 == 0.0 { 0.0 } else { (((p.0 - a.0) * abx + (p.1 - a.1) * aby) / len2).clamp(0.0, 1.0) };
+    let (qx, qy) = (a.0 + t * abx - p.0, a.1 + t * aby - p.1);
+    (qx * qx + qy * qy).sqrt()
+}
+
+/// Lucide glyph for each kind of device (used by the Ring style).
+fn line_glyph(kind: Kind) -> Glyph {
+    match kind {
+        Kind::Mouse => glyphs::MOUSE,
+        Kind::Keyboard => glyphs::KEYBOARD,
+        Kind::Gamepad => glyphs::GAMEPAD,
+        Kind::Headset => glyphs::HEADPHONES,
+        Kind::Other => glyphs::WIRELESS,
     }
 }
 
@@ -127,12 +236,15 @@ pub enum Style {
     SymbolBar,
     /// Big device symbol, coloured from the bottom up to the battery level.
     SymbolFill,
+    /// Line-art device glyph inside a ring that fills up with the battery level (HaloBattery-style).
+    Ring,
 }
 
 impl Style {
     /// Menu order, with labels.
-    pub const ALL: [(Style, &'static str); 4] = [
+    pub const ALL: [(Style, &'static str); 5] = [
         (Style::SymbolBar, "Device + level bar"),
+        (Style::Ring, "Device in a level ring"),
         (Style::SymbolFill, "Device, filled by level"),
         (Style::SymbolDigits, "Device + percentage"),
         (Style::Digits, "Percentage"),
@@ -178,6 +290,18 @@ pub fn render(
             draw_fitted(&mut c, digits_font, &text, digits, Some("0"), text_color, alpha, false);
         }
         Style::SymbolBar => draw_fitted(&mut c, symbol_font, &glyph, above_bar, None, fg, alpha, true),
+        Style::Ring => {
+            bar = false;
+            let level = percent.unwrap_or(0) as f32 / 100.0;
+            let (arc_color, track) = ring_colors(percent, charging, fg, light);
+            let thickness = (s * 0.085).max(1.4);
+            let radius = s / 2.0 - thickness / 2.0 - 0.5;
+            c.ring(s / 2.0, s / 2.0, radius, thickness, level, (arc_color, alpha), (track.0, track.1 * alpha));
+            // Lucide icons leave ~2 units of padding in their 24-unit box, so this keeps the ink well inside the ring.
+            let inner = s * 0.6;
+            let area = Area { x: (s - inner) / 2.0, y: (s - inner) / 2.0, w: inner, h: inner };
+            c.stroke(line_glyph(k), area, fg, alpha * 0.92, (2.0 * inner / 24.0).max(0.9));
+        }
         Style::SymbolFill => {
             bar = false;
             let mut mask = Canvas::new(size);
@@ -208,6 +332,94 @@ pub fn render(
         c.fill(0.0, top, (s * p as f32 / 100.0).max(1.0), bar_h, level_color(percent, charging), alpha);
     }
     c
+}
+
+/// One device in the taskbar widget.
+pub struct WidgetItem {
+    pub percent: Option<u8>,
+    pub charging: bool,
+    pub stale: bool,
+    pub kind: Option<Kind>,
+}
+
+/// The widget strip: each item as an icon in `style`, plus its percentage unless the style already shows it.
+/// `height` = the taskbar's height in pixels, `scale` = its DPI / 96.
+pub fn render_widget(items: &[WidgetItem], style: Style, height: usize, scale: f32, light: bool) -> Canvas {
+    // The ring style's symbol sits inside the ring, so it gets a larger icon to look as big as the other styles.
+    let base = if style == Style::Ring { 29.0 } else { 24.0 };
+    let icon = ((base * scale).round() as usize).clamp(12, height.max(12));
+    let font_px = 13.0 * scale;
+    let (pad, gap, item_gap) = (4.0 * scale, 4.0 * scale, 12.0 * scale);
+    let with_text = !matches!(style, Style::Digits | Style::SymbolDigits);
+    let fg = if light { INK } else { WHITE };
+
+    let label = |it: &WidgetItem| it.percent.filter(|_| with_text).map(|p| format!("{p}%"));
+    let font = TEXT_FONT.as_ref();
+    let widths: Vec<f32> = items
+        .iter()
+        .map(|it| icon as f32 + label(it).map_or(0.0, |t| gap + font.map_or(0.0, |f| text_width(f, &t, font_px))))
+        .collect();
+    let width = (pad * 2.0 + widths.iter().sum::<f32>() + item_gap * items.len().saturating_sub(1) as f32).ceil();
+
+    let mut c = Canvas::wide(width as usize, height);
+    // Windows passes clicks on fully transparent pixels of a layered window through to the taskbar below, so the
+    // gaps between and inside the icons would ignore clicks. An invisible (1/255) background makes the whole strip
+    // clickable.
+    c.fill(0.0, 0, width, height, (0, 0, 0), 1.0 / 255.0);
+    let mut x = pad;
+    for (it, w) in items.iter().zip(&widths) {
+        let img = render(it.percent, it.charging, it.stale, it.kind, style, icon, light);
+        c.draw(&img, x.round() as usize, (height - icon) / 2);
+        if let (Some(text), Some(f)) = (label(it), font) {
+            let low = it.percent.is_some_and(|p| p < LOW_THRESHOLD) && !it.charging;
+            let alpha = if it.stale { 110.0 / 255.0 } else { 0.92 };
+            draw_text(
+                &mut c,
+                f,
+                &text,
+                x + icon as f32 + gap,
+                height as f32 / 2.0,
+                font_px,
+                if low { LOW } else { fg },
+                alpha,
+            );
+        }
+        x += w + item_gap;
+    }
+    c
+}
+
+/// Font size in pixels (em) to ab_glyph's scale, which is relative to the font's whole height.
+fn em_scale(font: &FontVec, em_px: f32) -> f32 {
+    font.units_per_em().map_or(em_px, |upem| em_px * font.height_unscaled() / upem)
+}
+
+fn text_width(font: &FontVec, text: &str, em_px: f32) -> f32 {
+    let sf = font.as_scaled(PxScale::from(em_scale(font, em_px)));
+    text.chars().map(|ch| sf.h_advance(font.glyph_id(ch))).sum()
+}
+
+/// Draws `text` starting at `x`, with its digits vertically centred on `center_y`.
+#[allow(clippy::too_many_arguments)]
+fn draw_text(c: &mut Canvas, font: &FontVec, text: &str, x: f32, center_y: f32, em_px: f32, color: Rgb, alpha: f32) {
+    let scale = em_scale(font, em_px);
+    let Some(digit) = union(&layout(font, "0", scale, (0.0, 0.0))) else { return };
+    let origin = (x, center_y - (digit.min.y + digit.max.y) / 2.0);
+    for g in layout(font, text, scale, origin) {
+        let b = g.px_bounds();
+        g.draw(|gx, gy, cover| {
+            let (px, py) = (b.min.x as i32 + gx as i32, b.min.y as i32 + gy as i32);
+            if px >= 0 && py >= 0 {
+                c.blend(px as usize, py as usize, color, cover * alpha);
+            }
+        });
+    }
+}
+
+/// Ring style colours: the arc uses the same level colours as every other style (green, amber, red, blue while
+/// charging); the rest of the ring is a faint track. Returns the arc colour and the track (colour, opacity).
+fn ring_colors(percent: Option<u8>, charging: bool, fg: Rgb, light: bool) -> (Rgb, (Rgb, f32)) {
+    (level_color(percent, charging), (fg, if light { 0.22 } else { 0.28 }))
 }
 
 fn layout(font: &FontVec, text: &str, scale: f32, origin: (f32, f32)) -> Vec<OutlinedGlyph> {
@@ -369,6 +581,45 @@ pub fn write_preview(path: &str) -> std::io::Result<()> {
     write_bmp(path, &img, w, h)
 }
 
+/// Dev aid: the taskbar widget in every style, at 100% and 150% scale, on dark and light taskbars; magnified 2x.
+pub fn write_widget_preview(path: &str) -> std::io::Result<()> {
+    let items = [
+        WidgetItem { percent: Some(85), charging: false, stale: false, kind: Some(Kind::Mouse) },
+        WidgetItem { percent: Some(12), charging: false, stale: false, kind: Some(Kind::Headset) },
+        WidgetItem { percent: Some(63), charging: true, stale: false, kind: Some(Kind::Gamepad) },
+        WidgetItem { percent: Some(70), charging: false, stale: true, kind: Some(Kind::Keyboard) },
+    ];
+    let mut strips: Vec<(Canvas, bool)> = Vec::new();
+    for light in [false, true] {
+        for (scale, height) in [(1.0f32, 48usize), (1.5, 72)] {
+            for (style, _) in Style::ALL {
+                strips.push((render_widget(&items, style, height, scale, light), light));
+            }
+        }
+    }
+    let zoom = 2usize;
+    let w = strips.iter().map(|(c, _)| c.size).max().unwrap_or(1) * zoom;
+    let h: usize = strips.iter().map(|(c, _)| c.height * zoom).sum();
+    let mut img = vec![(0u8, 0u8, 0u8); w * h];
+    let mut top = 0;
+    for (c, light) in &strips {
+        let bg = if *light { (0xEE, 0xEE, 0xEE) } else { (0x20, 0x20, 0x20) };
+        for y in 0..c.height * zoom {
+            for x in 0..w {
+                let mut px = bg;
+                if x / zoom < c.size {
+                    let [r, g, b, a] = c.rgba8((y / zoom) * c.size + x / zoom);
+                    let mix = |s: u8, d: u8| ((s as u32 * a as u32 + d as u32 * (255 - a as u32)) / 255) as u8;
+                    px = (mix(r, bg.0), mix(g, bg.1), mix(b, bg.2));
+                }
+                img[(top + y) * w + x] = px;
+            }
+        }
+        top += c.height * zoom;
+    }
+    write_bmp(path, &img, w, h)
+}
+
 fn write_bmp(path: &str, img: &[(u8, u8, u8)], w: usize, h: usize) -> std::io::Result<()> {
     let row_len = (w * 3).div_ceil(4) * 4;
     let mut bmp = Vec::with_capacity(54 + row_len * h);
@@ -409,6 +660,32 @@ mod tests {
                 assert!(ink(&c, 0, size * 2 / 3) > size, "{style:?} at {size}px left the top of the icon empty");
             }
         }
+    }
+
+    #[test]
+    fn widget_strip_layout() {
+        use super::{WidgetItem, render_widget};
+        let item = |p| WidgetItem { percent: Some(p), charging: false, stale: false, kind: Some(Kind::Mouse) };
+        let one = render_widget(&[item(85)], Style::SymbolBar, 48, 1.0, false);
+        let two = render_widget(&[item(85), item(12)], Style::SymbolBar, 48, 1.0, false);
+        assert_eq!(one.height, 48);
+        assert!(two.size > one.size + 30, "a second device adds an icon and its text");
+        // Styles that already draw the number get no extra text, so they're narrower.
+        let digits = render_widget(&[item(85)], Style::Digits, 48, 1.0, false);
+        assert!(digits.size < one.size);
+        // 150% scale: everything grows.
+        assert!(render_widget(&[item(85)], Style::Ring, 72, 1.5, false).size > one.size);
+    }
+
+    #[test]
+    fn ring_arc_follows_the_level() {
+        let size = 32;
+        // Count bright pixels in the right half (the arc starts at 12 o'clock and runs clockwise).
+        let right_half = |p: u8| {
+            let c = render(Some(p), false, false, Some(Kind::Mouse), Style::Ring, size, false);
+            (0..size * size).filter(|&i| i % size > size / 2 + 1 && c.rgba8(i)[3] > 200).count()
+        };
+        assert!(right_half(50) > right_half(0) + 10, "half a ring lights up the right side");
     }
 
     #[test]
