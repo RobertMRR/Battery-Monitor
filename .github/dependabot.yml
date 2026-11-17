@@ -8,7 +8,13 @@ updates:
     groups:
       rust-deps:
         patterns: ["*"]
+    commit-message:
+      prefix: build   # Conventional Commits: "build(deps): bump …"
+      include: scope
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      prefix: ci      # "ci(deps): bump …"
+      include: scope

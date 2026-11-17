@@ -1,48 +1,65 @@
 # Builds the app on GitHub and publishes a release.
 #
-#   1. Bump `version` in Cargo.toml and add a matching "## [x.y.z]" section to CHANGELOG.md; commit.
-#   2. git tag vx.y.z && git push origin vx.y.z
-#      -> checks, builds x64 + ARM64, creates the "vx.y.z" release with the exes, checksums and changelog notes.
+#   Bump `version` in Cargo.toml and add a matching "## [x.y.z]" section to CHANGELOG.md in your PR. When it's merged
+#   into main, this creates the tag "vx.y.z" and the release with the exes, checksums and changelog notes.
+#   Pushes to main that don't change the version (fixes in progress, Dependabot) release nothing.
 #
 #   Actions tab -> Release -> "Run workflow" -> test build only; the exes are attached to the run as artifacts.
 name: Release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 permissions:
-  contents: write   # needed to create the release
+  contents: write   # needed to create the tag and the release
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Is this a new version?
+        id: v
+        shell: bash
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [[ "$GITHUB_EVENT_NAME" != "push" ]]; then
+            echo "version=$v-test.$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --exit-code --tags origin "refs/tags/v$v" > /dev/null; then
+            echo "v$v is already released; bump the version in Cargo.toml to release again."
+            echo "publish=skip" >> "$GITHUB_OUTPUT"
+          else
+            if ! grep -q "^## \[$v\]" CHANGELOG.md; then
+              echo "::error::Cargo.toml says $v but CHANGELOG.md has no '## [$v]' section."
+              exit 1
+            fi
+            echo "version=$v" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
   release:
+    needs: version
+    if: needs.version.outputs.publish != 'skip'
     runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      BM_VERSION: ${{ needs.version.outputs.version }}   # compiled into the exe (tray menu, file properties)
     steps:
       - uses: actions/checkout@v7
 
       - name: Install toolchain (from rust-toolchain.toml)
         run: rustup toolchain install
-
-      - name: Work out version
-        shell: bash
-        run: |
-          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            v="${GITHUB_REF_NAME#v}"
-            if [[ "$v" != "$cargo_version" ]]; then
-              echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo.toml version $cargo_version. Bump Cargo.toml first."
-              exit 1
-            fi
-            if ! grep -q "^## \[$v\]" CHANGELOG.md; then
-              echo "::error::CHANGELOG.md has no '## [$v]' section."
-              exit 1
-            fi
-          else
-            v="$cargo_version-test.$GITHUB_RUN_NUMBER"
-          fi
-          echo "VERSION=$v" >> "$GITHUB_ENV"
-          echo "BM_VERSION=$v" >> "$GITHUB_ENV"   # compiled into the exe (tray menu, file properties)
 
       - name: Checks
         run: |
@@ -82,7 +99,7 @@ jobs:
           } > release-notes.md
 
       - name: Upload build (test runs)
-        if: github.ref_type != 'tag'
+        if: needs.version.outputs.publish == 'false'
         uses: actions/upload-artifact@v7
         with:
           name: BatteryMonitor-${{ env.VERSION }}
@@ -90,9 +107,12 @@ jobs:
             release/
             release-notes.md
 
-      - name: Create GitHub release
-        if: github.ref_type == 'tag'
+      - name: Create tag and GitHub release
+        if: needs.version.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: v${{ env.VERSION }}
           files: release/*
           body_path: release-notes.md
